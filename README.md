@@ -59,7 +59,7 @@ The `trainer.fit` function will output a dictionary containing training, validat
 test_results = trainer.test(test_loader, criterion)
 ```
 
-The `trainer.test` function will output a dictionary containing training, validation, and test losses and metrics.
+The `trainer.test` function will output a dictionary containing test losses and metrics.
 
 
 ### 5. Predict
