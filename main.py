@@ -2,7 +2,6 @@ from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
-import numpy as np
 
 import torch
 import torch.nn as nn
@@ -41,8 +40,8 @@ def main():
 
     # Load and preprocess
     data = load_iris()
-    X = np.tile(data.data, (100, 1))
-    y = np.tile(data.target, 100)
+    X = data.data
+    y = data.target
 
     # Split into train, val, test (each 50%, then 50/50 again)
     X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.5, random_state=random_state)
@@ -70,8 +69,8 @@ def main():
     test_dataset = IrisDataset(X_test_tensor, y_test_tensor)
 
     train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False, drop_last=True)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False, drop_last=True)
 
     model = IrisNet()
     criterion = nn.CrossEntropyLoss()
@@ -93,8 +92,10 @@ def main():
         }
     )
 
-    _ = trainer.test(test_loader, criterion)
-    print(trainer.predict(test_loader))
+    print(trainer.test(test_loader, criterion, metrics={
+            'accuracy': accuracy_score
+        }))
+    print(trainer.predict(next(iter(test_loader))['input'][0]))
 
 if __name__=='__main__':
     main()

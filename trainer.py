@@ -1,10 +1,18 @@
 import torch
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
 import time
 import operator
 
 class Trainer:
+    """
+    Trainer class for training, validating, and testing a PyTorch model.
+
+    Attributes:
+        model (torch.nn.Module): The model to be trained.
+        device (torch.device): The device to run the model on (e.g., 'cpu' or 'cuda').
+    """
     mode_dict = {"min": operator.lt, "max": operator.gt}
 
     def __init__(self,
@@ -28,7 +36,26 @@ class Trainer:
             scheduler=None,
             metrics: dict = {},
         ):
+        """
+        Trains the model using the provided data loaders, optimizer, and criterion.
 
+        Args:
+            train_loader (DataLoader): DataLoader for the training data.
+            optimizer (torch.optim.Optimizer): Optimizer for training.
+            criterion (torch.nn.Module): Loss function.
+            max_epochs (int): Maximum number of epochs to train.
+            early_stopping (bool, optional): Whether to use early stopping. Defaults to False.
+            patience (int, optional): Number of epochs to wait for improvement before stopping. Defaults to 5.
+            val_loader (DataLoader, optional): DataLoader for the validation data. Defaults to None.
+            test_loader (DataLoader, optional): DataLoader for the test data. Defaults to None.
+            early_stopping_monitor (str, optional): Metric to monitor for early stopping. Defaults to 'loss'.
+            early_stopping_mode (str, optional): Mode for early stopping ('min' or 'max'). Defaults to 'min'.
+            scheduler (torch.optim.lr_scheduler, optional): Learning rate scheduler. Defaults to None.
+            metrics (dict, optional): Dictionary of metrics to compute. Defaults to {}.
+
+        Returns:
+            dict: Dictionary containing training, validation, and test losses and metrics.
+        """
         def print_table_header():
             base = f"| {'Epoch':<6}| {'lr':<10}| {'train_loss':<11}|"
             val_loss_str = f" {'val_loss':<11}|" if val_loader is not None and val_loss is not None else ""
@@ -41,7 +68,8 @@ class Trainer:
 
             header = base + val_loss_str + monitor_str + time_str
             header_len = len(header)
-
+            
+            print()
             print("-"*header_len)
             print(header)
             print("-"*header_len)
@@ -85,6 +113,9 @@ class Trainer:
         header_len = print_table_header()
 
         for epoch in range(max_epochs):
+            if early_stopping_reached:
+                break
+
             start_time = time.time()
             
             lr = optimizer.param_groups[0]['lr']
@@ -126,12 +157,11 @@ class Trainer:
                     if patience_counter >= patience:
                         self.model.load_state_dict(best_model)
                         early_stopping_reached = True
-                        break
 
             print_table_row()
-        print_table_row()
 
         print("-"*header_len)
+        print()
 
         return {
             "train_loss": train_loss,
@@ -143,22 +173,53 @@ class Trainer:
             **test_metrics
         }
 
-    def predict(self, data_loader):
+    def predict(self, data : DataLoader | torch.Tensor):
+        """
+        Generates predictions for the given data.
+
+        Args:
+            data (DataLoader or dict or torch.Tensor): 
+                - If DataLoader, generates predictions for the entire dataset.
+                - If Tensor, generates a prediction for the single input.
+
+        Returns:
+            np.ndarray: Array of predictions.
+        """
+        self.model.eval()
         predictions = []
 
-        self.model.eval()
         with torch.inference_mode():
-            for batch in tqdm(data_loader, desc='Prediction'):
-                input = batch['input'].to(self.device)
-                output = self.model(input)
-
+            if isinstance(data, torch.utils.data.DataLoader):
+                for batch in tqdm(data, desc='Prediction'):
+                    input_tensor = batch['input'].to(self.device)
+                    output = self.model(input_tensor)
+                    pred = self._output_parse(output)
+                    predictions.append(pred.cpu().numpy())
+                return np.concatenate(predictions, axis=0)
+            
+            # Single input case (dict or Tensor)
+            elif isinstance(data, torch.Tensor):
+                input_tensor = data.to(self.device)
+                output = self.model(input_tensor).unsqueeze(0)
                 pred = self._output_parse(output)
-                predictions.append(pred.cpu().numpy())
-
-        return np.concatenate(predictions, axis=0)
+                return pred.cpu().numpy()
+            else:
+                raise TypeError("Input must be a DataLoader, or torch.Tensor")
     
-    def test(self, data_loader, criterion, metrics: dict = {}, task='Testing'):
-        return self._validate_epoch(data_loader, criterion, metrics, task=task)
+    def test(self, data_loader, criterion, metrics: dict = {}):
+        """
+        Evaluates the model on the given data loader.
+
+        Args:
+            data_loader (DataLoader): DataLoader for the data to evaluate.
+            criterion (torch.nn.Module): Loss function.
+            metrics (dict, optional): Dictionary of metrics to compute. Defaults to {}.
+            task (str, optional): Task description for progress bar. Defaults to 'Testing'.
+
+        Returns:
+            (loss, metrics): Tuple containing the loss and metrics.
+        """
+        return self._validate_epoch(data_loader, criterion, metrics, task='Testing')
 
     def _train_epoch(self, train_loader, optimizer, criterion, metrics):
         train_loss = 0
