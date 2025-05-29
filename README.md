@@ -6,6 +6,7 @@ This repository contains a customizable PyTorch training loop template that simp
 - ✅ Early stopping
 - 📉 Learning rate scheduling
 - 📊 Metric logging
+- 🛑 Graceful `Keyboard Interrupt` handling during training, will return the results up to the current epoch
 
 Instead of rewriting boilerplate code for every project, use this reusable trainer as a solid starting point and adapt it to your specific needs!
 

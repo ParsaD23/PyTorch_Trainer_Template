@@ -88,7 +88,6 @@ class Trainer:
                 train_val = train_metrics_epoch[early_stopping_monitor]
                 val_val = val_metrics_epoch[early_stopping_monitor]
                 monitor_str = f" {train_val:<20.4f}| {val_val:<20.4f}|"
-                # monitor_str = f" train_{early_stopping_monitor}: {train_val:.4f} | val_{early_stopping_monitor}: {val_val:.4f} |"
             
             time_str = f" {elapsed_time:<10.3f}|" if elapsed_time is not None else ""
             early_stop_flag = " (!) Early stopping" if early_stopping_reached else ""
@@ -112,53 +111,56 @@ class Trainer:
 
         header_len = print_table_header()
 
-        for epoch in range(max_epochs):
-            if early_stopping_reached:
-                break
+        try:
+            for epoch in range(max_epochs):
+                if early_stopping_reached:
+                    break
 
-            start_time = time.time()
-            
-            lr = optimizer.param_groups[0]['lr']
-            learning_rates.append(lr)
-
-            train_loss_epoch, train_metrics_epoch = self._train_epoch(train_loader, optimizer, criterion, metrics)
-            train_loss.append(train_loss_epoch)
-            
-            if val_loader is not None:
-                val_loss_epoch, val_metrics_epoch = self._validate_epoch(val_loader, criterion, metrics, task='Evaluation')
-                val_loss.append(val_loss_epoch)
-            
-            if test_loader is not None:
-                test_loss_epoch, test_metrics_epoch = self._validate_epoch(test_loader, criterion, metrics, task='Test Evaluation')
-                test_loss.append(test_loss_epoch)
-
-            for metric in metrics.keys():
-                train_metrics[f'train_{metric}'].append(train_metrics_epoch[metric])
-                if val_loader is not None:
-                    val_metrics[f'val_{metric}'].append(val_metrics_epoch[metric])
-                if test_loader is not None:
-                    test_metrics[f'test_{metric}'].append(test_metrics_epoch[metric])
-            
-            end_time = time.time()
-
-            if scheduler is not None:
-                scheduler.step()
-            
-            if early_stopping:
-                _val_monitor = val_loss_epoch if early_stopping_monitor == 'loss' else val_metrics_epoch[early_stopping_monitor]
+                start_time = time.time()
                 
-                if self.mode_dict[early_stopping_mode](_val_monitor, best_val_monitor):
-                    best_val_monitor = _val_monitor
-                    best_epoch = epoch
-                    best_model = self.model.state_dict()
-                    patience_counter = 0
-                else:
-                    patience_counter += 1
-                    if patience_counter >= patience:
-                        self.model.load_state_dict(best_model)
-                        early_stopping_reached = True
+                lr = optimizer.param_groups[0]['lr']
+                learning_rates.append(lr)
 
-            print_table_row()
+                train_loss_epoch, train_metrics_epoch = self._train_epoch(train_loader, optimizer, criterion, metrics)
+                train_loss.append(train_loss_epoch)
+                
+                if val_loader is not None:
+                    val_loss_epoch, val_metrics_epoch = self._validate_epoch(val_loader, criterion, metrics, task='Evaluation')
+                    val_loss.append(val_loss_epoch)
+                
+                if test_loader is not None:
+                    test_loss_epoch, test_metrics_epoch = self._validate_epoch(test_loader, criterion, metrics, task='Test Evaluation')
+                    test_loss.append(test_loss_epoch)
+
+                for metric in metrics.keys():
+                    train_metrics[f'train_{metric}'].append(train_metrics_epoch[metric])
+                    if val_loader is not None:
+                        val_metrics[f'val_{metric}'].append(val_metrics_epoch[metric])
+                    if test_loader is not None:
+                        test_metrics[f'test_{metric}'].append(test_metrics_epoch[metric])
+                
+                end_time = time.time()
+
+                if scheduler is not None:
+                    scheduler.step()
+                
+                if early_stopping:
+                    _val_monitor = val_loss_epoch if early_stopping_monitor == 'loss' else val_metrics_epoch[early_stopping_monitor]
+                    
+                    if self.mode_dict[early_stopping_mode](_val_monitor, best_val_monitor):
+                        best_val_monitor = _val_monitor
+                        best_epoch = epoch
+                        best_model = self.model.state_dict()
+                        patience_counter = 0
+                    else:
+                        patience_counter += 1
+                        if patience_counter >= patience:
+                            self.model.load_state_dict(best_model)
+                            early_stopping_reached = True
+
+                print_table_row()
+        except KeyboardInterrupt:
+            print(f"|{'- Keyboard Interrupt -'.center(header_len-2)}|")
 
         print("-"*header_len)
         print()
