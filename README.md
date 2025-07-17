@@ -6,6 +6,7 @@ This repository contains a customizable PyTorch training loop template that simp
 - ✅ Early stopping
 - 📉 Learning rate scheduling
 - 📊 Metric logging
+- ❄️ Freezing part of your network for first few epochs
 - 🛑 Graceful `Keyboard Interrupt` handling during training, will return the results up to the current epoch
 
 Instead of rewriting boilerplate code for every project, use this reusable trainer as a solid starting point and adapt it to your specific needs!
@@ -24,7 +25,7 @@ A working example using the Iris dataset, including a custom `Dataset` class and
     ```python
     {'input': [...], 'target': [...]}
     ```
-- Modify the `_output_parse(self, output)` function to match the output requirements of your model
+- Create the `output_parse(self, output)` function in your model class to match the output requirements of your model
 
 ### 2. Initialize the Trainer
 

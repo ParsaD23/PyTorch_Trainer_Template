@@ -19,7 +19,10 @@ class IrisNet(nn.Module):
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = self.fc2(x)
-        return x  
+        return x
+    
+    def output_parse(self, output): # modify based on desired output
+        return torch.max(output, 1)[1]
 
 class IrisDataset(Dataset):
     def __init__(self, inputs, targets):
@@ -69,8 +72,8 @@ def main():
     test_dataset = IrisDataset(X_test_tensor, y_test_tensor)
 
     train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False, drop_last=True)
-    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False, drop_last=True)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
     model = IrisNet()
     criterion = nn.CrossEntropyLoss()

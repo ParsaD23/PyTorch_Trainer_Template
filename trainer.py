@@ -34,6 +34,7 @@ class Trainer:
             early_stopping_monitor='loss', 
             early_stopping_mode='min',
             scheduler=None,
+            freeze_epochs=None,
             metrics: dict = {},
         ):
         """
@@ -51,6 +52,7 @@ class Trainer:
             early_stopping_monitor (str, optional): Metric to monitor for early stopping. Defaults to 'loss'.
             early_stopping_mode (str, optional): Mode for early stopping ('min' or 'max'). Defaults to 'min'.
             scheduler (torch.optim.lr_scheduler, optional): Learning rate scheduler. Defaults to None.
+            freeze_epochs (int, optional): Number of epochs to freeze the model. Defaults to None.
             metrics (dict, optional): Dictionary of metrics to compute. Defaults to {}.
 
         Returns:
@@ -64,7 +66,7 @@ class Trainer:
             if early_stopping and early_stopping_monitor != 'loss':
                 monitor_str = f" {f'train_{early_stopping_monitor}':<20}| {f'val_{early_stopping_monitor}':<20}|"
 
-            time_str = f" {'time (s)':<10}|"
+            time_str = f" {'time':<10}|"
 
             header = base + val_loss_str + monitor_str + time_str
             header_len = len(header)
@@ -89,7 +91,7 @@ class Trainer:
                 val_val = val_metrics_epoch[early_stopping_monitor]
                 monitor_str = f" {train_val:<20.4f}| {val_val:<20.4f}|"
             
-            time_str = f" {elapsed_time:<10.3f}|" if elapsed_time is not None else ""
+            time_str = f" {format_duration(elapsed_time):<10}|"
             early_stop_flag = " (!) Early stopping" if early_stopping_reached else ""
             
             print(base_row + val_loss_str + monitor_str + time_str + early_stop_flag)
@@ -118,6 +120,12 @@ class Trainer:
 
                 start_time = time.time()
                 
+                if freeze_epochs is not None:
+                    if epoch < freeze_epochs:
+                        self.model.freeze()
+                    else:
+                        self.model.unfreeze()
+
                 lr = optimizer.param_groups[0]['lr']
                 learning_rates.append(lr)
 
@@ -195,7 +203,7 @@ class Trainer:
                 for batch in tqdm(data, desc='Prediction'):
                     input_tensor = batch['input'].to(self.device)
                     output = self.model(input_tensor)
-                    pred = self._output_parse(output)
+                    pred = self.model.output_parse(output)
                     predictions.append(pred.cpu().numpy())
                 return np.concatenate(predictions, axis=0)
             
@@ -203,7 +211,7 @@ class Trainer:
             elif isinstance(data, torch.Tensor):
                 input_tensor = data.to(self.device)
                 output = self.model(input_tensor).unsqueeze(0)
-                pred = self._output_parse(output)
+                pred = self.model.output_parse(output)
                 return pred.cpu().numpy()
             else:
                 raise TypeError("Input must be a DataLoader, or torch.Tensor")
@@ -225,7 +233,10 @@ class Trainer:
 
     def _train_epoch(self, train_loader, optimizer, criterion, metrics):
         train_loss = 0
-        train_metrics = {metric: 0 for metric in metrics.keys()}
+
+        num_samples = 0
+        all_preds = []
+        all_targets = []
 
         self.model.train()
         progress_bar = tqdm(enumerate(train_loader), total=len(train_loader), desc='Training', leave=False)
@@ -239,20 +250,29 @@ class Trainer:
             loss = criterion(output, target)
             loss.backward()
             optimizer.step()
-
+            
+            batch_size = input.size(0)
             train_loss += loss.item()
+            num_samples += batch_size
 
-            pred = self._output_parse(output)
-            for metric in metrics.keys():
-                train_metrics[metric] += metrics[metric](pred, target)
+            pred = self.model.output_parse(output)
+            
+            all_preds.append(pred)
+            all_targets.append(target)
 
-            progress_bar.set_postfix({'loss': train_loss / (batch_idx + 1)})
+            progress_bar.set_postfix({'loss': train_loss / num_samples})
 
-        return train_loss / len(train_loader), {metric: train_metrics[metric] / len(train_loader) for metric in train_metrics}
+        all_preds = torch.cat(all_preds)
+        all_targets = torch.cat(all_targets)
+
+        return train_loss / num_samples, {metric: metrics[metric](all_preds, all_targets) for metric in metrics}
 
     def _validate_epoch(self, val_loader, criterion, metrics, task='Evaluation'):
         val_loss = 0
-        val_metrics = {metric: 0 for metric in metrics.keys()}
+        
+        num_samples = 0
+        all_preds = []
+        all_targets = []
 
         self.model.eval()
         with torch.inference_mode():
@@ -264,14 +284,36 @@ class Trainer:
                 output = self.model(input)
                 loss = criterion(output, target)
 
-                val_loss += loss.item()
+                batch_size = input.size(0)
+                val_loss += loss.item() * batch_size
+                num_samples += batch_size
 
-                pred = self._output_parse(output)
-                for metric in metrics.keys():
-                    val_metrics[metric] += metrics[metric](pred, target)
-                progress_bar.set_postfix({'loss': val_loss / (batch_idx + 1)})
+                pred = self.model.output_parse(output)
 
-        return val_loss / len(val_loader), {metric: val_metrics[metric] / len(val_loader) for metric in val_metrics}
-    
-    def _output_parse(self, output): # modify based on desired output
-        return torch.max(output, 1)[1]
+                all_preds.append(pred)
+                all_targets.append(target)
+                
+                progress_bar.set_postfix({'loss': val_loss / num_samples})
+
+        all_preds = torch.cat(all_preds)
+        all_targets = torch.cat(all_targets)
+
+        return val_loss / num_samples, {metric: metrics[metric](all_preds, all_targets) for metric in metrics}
+
+# ------------ util functions ------------
+
+def format_duration(seconds):
+    secs = int(seconds)
+    hours = secs // 3600
+    minutes = (secs % 3600) // 60
+    secs = secs % 60
+    ms = int(seconds * 1000)
+
+    if hours > 0:
+        return f"{hours} h {minutes} m"
+    elif minutes > 0:
+        return f"{minutes} m {secs} s"
+    elif secs > 0:
+        return f"{secs} s {ms} ms"
+    else:
+        return f"{ms} ms"
