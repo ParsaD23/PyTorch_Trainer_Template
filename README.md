@@ -7,9 +7,14 @@ This repository contains a customizable PyTorch training loop template that simp
 - 📉 Learning rate scheduling
 - 📊 Metric logging
 - ❄️ Freezing part of your network for first few epochs
+- 🔧 Fast dev run: train the model on a single batch to ensure soundness
 - 🛑 Graceful `Keyboard Interrupt` handling during training, will return the results up to the current epoch
 
 Instead of rewriting boilerplate code for every project, use this reusable trainer as a solid starting point and adapt it to your specific needs!
+
+## ⚙️ Parameters
+
+
 
 ## 🚀 Example
 
@@ -45,11 +50,14 @@ results = trainer.fit(
     criterion=criterion,
     max_epochs=100,
     early_stopping=True,
+    patience=5,
     early_stopping_monitor='accuracy',
     early_stopping_mode='max',
+    scheduler=None,
     metrics={
         'accuracy': sklearn.metrics.accuracy_score
-    }
+    },
+    fast_dev_run=False,
 )
 ```
 

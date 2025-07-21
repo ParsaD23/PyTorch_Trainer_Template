@@ -1,9 +1,10 @@
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 import numpy as np
 import time
 import operator
+import random
 
 class Trainer:
     """
@@ -36,6 +37,7 @@ class Trainer:
             scheduler=None,
             freeze_epochs=None,
             metrics: dict = {},
+            fast_dev_run=False,
         ):
         """
         Trains the model using the provided data loaders, optimizer, and criterion.
@@ -54,13 +56,14 @@ class Trainer:
             scheduler (torch.optim.lr_scheduler, optional): Learning rate scheduler. Defaults to None.
             freeze_epochs (int, optional): Number of epochs to freeze the model. Defaults to None.
             metrics (dict, optional): Dictionary of metrics to compute. Defaults to {}.
+            fast_dev_run(bool, optional): Train the model on a single batch to check model soundness. Defaults to False.
 
         Returns:
             dict: Dictionary containing training, validation, and test losses and metrics.
         """
         def print_table_header():
             base = f"| {'Epoch':<6}| {'lr':<10}| {'train_loss':<11}|"
-            val_loss_str = f" {'val_loss':<11}|" if val_loader is not None and val_loss is not None else ""
+            val_loss_str = f" {'val_loss':<11}|" if val_loader is not None and val_metrics['loss'] is not None else ""
 
             monitor_str = ""
             if early_stopping and early_stopping_monitor != 'loss':
@@ -81,9 +84,9 @@ class Trainer:
         def print_table_row():
             elapsed_time = end_time - start_time
 
-            base_row = f"| {epoch:<6}| {lr:<10.3E}| {train_loss_epoch:<11.3E}|"
+            base_row = f"| {epoch:<6}| {lr:<10.3E}| {train_metrics_epoch['loss']:<11.3E}|"
             
-            val_loss_str = f" {val_loss_epoch:<11.3E}|" if val_loader is not None else ""
+            val_loss_str = f" {val_metrics_epoch['loss']:<11.3E}|" if val_loader is not None else ""
             
             monitor_str = ""
             if early_stopping and early_stopping_monitor != 'loss':
@@ -96,13 +99,13 @@ class Trainer:
             
             print(base_row + val_loss_str + monitor_str + time_str + early_stop_flag)
 
-        train_loss = []
-        val_loss = []
-        test_loss = []
+        train_metrics = {'loss': []}
+        val_metrics = {'loss': []}
+        test_metrics = {'loss': []}
 
-        train_metrics = {f'train_{metric}': [] for metric in metrics.keys()}
-        val_metrics = {f'val_{metric}': [] for metric in metrics.keys()}
-        test_metrics = {f'test_{metric}': [] for metric in metrics.keys()}
+        train_metrics.update({f'train_{metric}': [] for metric in metrics.keys()})
+        val_metrics.update({f'val_{metric}': [] for metric in metrics.keys()})
+        test_metrics.update({f'test_{metric}': [] for metric in metrics.keys()})
 
         learning_rates = []
 
@@ -112,6 +115,18 @@ class Trainer:
         early_stopping_reached = False
 
         header_len = print_table_header()
+        
+        if fast_dev_run:
+            subset_indices = random.sample(range(len(train_loader.dataset)), train_loader.batch_size)
+            train_loader = DataLoader(Subset(train_loader.dataset, subset_indices), batch_size=train_loader.batch_size)
+
+            if val_loader:
+                subset_indices = random.sample(range(len(val_loader.dataset)), val_loader.batch_size)
+                val_loader = DataLoader(Subset(val_loader.dataset, subset_indices), batch_size=val_loader.batch_size)
+
+            if test_loader:
+                subset_indices = random.sample(range(len(train_loader.dataset)), test_loader.batch_size)
+                train_loader = DataLoader(Subset(train_loader.dataset, subset_indices), batch_size=test_loader.batch_size)
 
         try:
             for epoch in range(max_epochs):
@@ -129,16 +144,16 @@ class Trainer:
                 lr = optimizer.param_groups[0]['lr']
                 learning_rates.append(lr)
 
-                train_loss_epoch, train_metrics_epoch = self._train_epoch(train_loader, optimizer, criterion, metrics)
-                train_loss.append(train_loss_epoch)
+                train_metrics_epoch = self._train_epoch(train_loader, optimizer, criterion, metrics)
+                train_metrics['loss'].append(train_metrics_epoch['loss'])
                 
                 if val_loader is not None:
-                    val_loss_epoch, val_metrics_epoch = self._validate_epoch(val_loader, criterion, metrics, task='Evaluation')
-                    val_loss.append(val_loss_epoch)
+                    val_metrics_epoch = self._validate_epoch(val_loader, criterion, metrics, task='Evaluation')
+                    train_metrics['loss'].append(val_metrics_epoch['loss'])
                 
                 if test_loader is not None:
-                    test_loss_epoch, test_metrics_epoch = self._validate_epoch(test_loader, criterion, metrics, task='Test Evaluation')
-                    test_loss.append(test_loss_epoch)
+                    test_metrics_epoch = self._validate_epoch(test_loader, criterion, metrics, task='Test Evaluation')
+                    test_metrics['loss'].append(test_metrics_epoch['loss'])
 
                 for metric in metrics.keys():
                     train_metrics[f'train_{metric}'].append(train_metrics_epoch[metric])
@@ -152,8 +167,8 @@ class Trainer:
                 if scheduler is not None:
                     scheduler.step()
                 
-                if early_stopping:
-                    _val_monitor = val_loss_epoch if early_stopping_monitor == 'loss' else val_metrics_epoch[early_stopping_monitor]
+                if early_stopping and not fast_dev_run:
+                    _val_monitor = val_metrics_epoch[early_stopping_monitor]
                     
                     if self.mode_dict[early_stopping_mode](_val_monitor, best_val_monitor):
                         best_val_monitor = _val_monitor
@@ -174,13 +189,10 @@ class Trainer:
         print()
 
         return {
-            "train_loss": train_loss,
-            "val_loss": val_loss,
-            "test_loss": test_loss,
-            "learning_rate": learning_rates,
             **train_metrics,
             **val_metrics,
-            **test_metrics
+            **test_metrics,
+            "learning_rate": learning_rates,
         }
 
     def predict(self, data : DataLoader | torch.Tensor):
@@ -265,7 +277,10 @@ class Trainer:
         all_preds = torch.cat(all_preds)
         all_targets = torch.cat(all_targets)
 
-        return train_loss / num_samples, {metric: metrics[metric](all_preds, all_targets) for metric in metrics}
+        results = {'loss': train_loss / num_samples}
+        results.update({metric: metrics[metric](all_preds, all_targets) for metric in metrics})
+        
+        return results
 
     def _validate_epoch(self, val_loader, criterion, metrics, task='Evaluation'):
         val_loss = 0
@@ -298,7 +313,10 @@ class Trainer:
         all_preds = torch.cat(all_preds)
         all_targets = torch.cat(all_targets)
 
-        return val_loss / num_samples, {metric: metrics[metric](all_preds, all_targets) for metric in metrics}
+        results = {'loss': val_loss / num_samples}
+        results.update({metric: metrics[metric](all_preds, all_targets) for metric in metrics})
+        
+        return results
 
 # ------------ util functions ------------
 

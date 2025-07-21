@@ -92,7 +92,8 @@ def main():
         early_stopping_mode='max',
         metrics={
             'accuracy': accuracy_score
-        }
+        },
+        fast_dev_run=False,
     )
 
     print(trainer.test(test_loader, criterion, metrics={
